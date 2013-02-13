@@ -4,7 +4,7 @@
   Module:    vtkSignedImplicitModeller.h
 
   Copyright (c) Alex Mansfield
-
+  All rights reserved.
   This software is distributed WITHOUT ANY WARRANTY; without even
   the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
   PURPOSE.  See the above copyright notice for more information.
@@ -17,17 +17,18 @@
 #ifndef __vtkSignedImplicitModeller_h
 #define __vtkSignedImplicitModeller_h
 
+#include "vtkFiltersHybridModule.h" // For export macro
 #include "vtkImageAlgorithm.h"
-#include "vtkDataSet.h"
+#include "vtkPolyData.h"
 
-#define VTK_VOXEL_MODE   0
-#define VTK_CELL_MODE    1
+/* #define VTK_VOXEL_MODE   0 */
+/* #define VTK_CELL_MODE    1 */
 
 class vtkDataArray;
 class vtkExtractGeometry;
 class vtkMultiThreader;
 
-class VTK_HYBRID_EXPORT vtkSignedImplicitModeller : public vtkImageAlgorithm 
+class VTKFILTERSHYBRID_EXPORT vtkSignedImplicitModeller : public vtkImageAlgorithm 
 {
 public:
 	vtkTypeMacro(vtkSignedImplicitModeller,vtkImageAlgorithm);
@@ -110,11 +111,11 @@ public:
 	// when there are a lot of cells (at least a thousand?); relative
 	// performance improvement increases with addition cells.  Primitives
 	// should not be stripped for best performance of the voxel mode.  
-	vtkSetClampMacro(ProcessMode, int, 0, 1);
-	vtkGetMacro(ProcessMode, int);
-	void SetProcessModeToPerVoxel() {this->SetProcessMode(VTK_VOXEL_MODE);}
-	void SetProcessModeToPerCell()  {this->SetProcessMode(VTK_CELL_MODE);}
-	const char *GetProcessModeAsString(void);
+	/* vtkSetClampMacro(ProcessMode, int, 0, 1); */
+	/* vtkGetMacro(ProcessMode, int); */
+	/* void SetProcessModeToPerVoxel() {this->SetProcessMode(VTK_VOXEL_MODE);} */
+	/* void SetProcessModeToPerCell()  {this->SetProcessMode(VTK_CELL_MODE);} */
+	/* const char *GetProcessModeAsString(void); */
 
 	// Description:
 	// Specify the level of the locator to use when using the per voxel
@@ -167,12 +168,15 @@ public:
 	void EndAppend();
 
 	// See the vtkAlgorithm for a desciption of what these do
-	int ProcessRequest(vtkInformation*,
-					   vtkInformationVector**,
-					   vtkInformationVector*);
+	int ProcessRequest(vtkInformation*, vtkInformationVector**, vtkInformationVector*);
+
+	template<class OT>
+	void SetOutputDistance(double distance, OT *outputValue, double capValue=0, double scaleFactor=0);
+	template<class OT>
+	void GetOutputDistance(OT outputValue, double & distance, double & distance2, double scaleFactor=0);
 
 	// computation of signed distance function
-	int ComputeSignedDistance(vtkDataSet * input, int cellNum, double x[3], double cp[3], double & sdist);
+	int ComputeSignedDistance(vtkPolyData * input, int cellNum, double x[3], double cp[3], double & sdist);
 
 protected:
 	vtkSignedImplicitModeller();
@@ -180,11 +184,8 @@ protected:
 
 	double GetScalarTypeMax(int type);
 
-	virtual int RequestInformation (vtkInformation *, 
-									vtkInformationVector **,
-									vtkInformationVector *);
-	virtual int RequestData (vtkInformation *, 
-							 vtkInformationVector **, vtkInformationVector *);
+	virtual int RequestInformation (vtkInformation *, vtkInformationVector **, vtkInformationVector *);
+	virtual int RequestData (vtkInformation *, vtkInformationVector **, vtkInformationVector *);
   
 	void StartAppend(int internal);
 	void Cap(vtkDataArray *s);
@@ -200,7 +201,7 @@ protected:
 	int DataAppended;
 	int AdjustBounds;
 	double AdjustDistance;
-	int ProcessMode;
+	/* int ProcessMode; */
 	int LocatorMaxLevel;
 	int OutputScalarType;
 	int ScaleToMaximumDistance;
