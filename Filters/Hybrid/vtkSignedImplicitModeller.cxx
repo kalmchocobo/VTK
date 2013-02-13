@@ -80,6 +80,8 @@ vtkSignedImplicitModeller::vtkSignedImplicitModeller()
 	this->DataAppended = 0;
 	this->AdjustBounds = 1;
 	this->AdjustDistance = 0.0125;
+	this->AdjustBoundsAbsolute = 0;
+	this->AdjustDistanceAbsolute = 0.0;
 
 	// this->ProcessMode = VTK_CELL_MODE;
 	this->LocatorMaxLevel = 5;
@@ -624,7 +626,7 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 	poly = normalsGen->GetOutput();
 
 	// obtain point/face mappings ***
-	poly->BuildLinks();
+	//poly->BuildLinks();
 
 	//
 	// Traverse all cells; computing distance function on volume points.
@@ -1063,22 +1065,28 @@ double vtkSignedImplicitModeller::ComputeModelBounds(vtkDataSet *input)
 		}
     }
 
+	for (i=0; i<3; i++)
+		{
+			this->ModelBounds[2*i] = bounds[2*i];
+			this->ModelBounds[2*i+1] = bounds[2*i+1];
+		}
+
 	// adjust bounds so model fits strictly inside (only if not set previously)
 	if ( this->AdjustBounds )
     {
 		for (i=0; i<3; i++)
 		{
-			this->ModelBounds[2*i] = bounds[2*i] - maxDist*this->AdjustDistance;
-			this->ModelBounds[2*i+1] = bounds[2*i+1] + maxDist*this->AdjustDistance;
+			this->ModelBounds[2*i] -= maxDist*this->AdjustDistance;
+			this->ModelBounds[2*i+1] += maxDist*this->AdjustDistance;
 		}
     }
-	else  // to handle problem case where bounds not specified and AdjustBounds
-		//  not on; will be setting ModelBounds to self if previosusly set
+
+	if ( this->AdjustBoundsAbsolute )
     {
 		for (i=0; i<3; i++)
 		{
-			this->ModelBounds[2*i] = bounds[2*i];
-			this->ModelBounds[2*i+1] = bounds[2*i+1];
+			this->ModelBounds[2*i] -= this->AdjustDistanceAbsolute;
+			this->ModelBounds[2*i+1] += this->AdjustDistanceAbsolute;
 		}
     }
 
@@ -1276,7 +1284,9 @@ void vtkSignedImplicitModeller::PrintSelf(ostream& os, vtkIndent indent)
 
 	os << indent << "ScaleToMaximumDistance: " << (this->ScaleToMaximumDistance ? "On\n" : "Off\n");
 	os << indent << "AdjustBounds: " << (this->AdjustBounds ? "On\n" : "Off\n");
-	os << indent << "Adjust Distance: " << this->AdjustDistance << "\n";
+	os << indent << "AdjustDistance: " << this->AdjustDistance << "\n";
+	os << indent << "AdjustBoundsAbsolute: " << (this->AdjustBoundsAbsolute ? "On\n" : "Off\n");
+	os << indent << "AdjustDistanceAbsolute: " << this->AdjustDistanceAbsolute << "\n";
 	// os << indent << "Process Mode: " << this->ProcessMode << "\n";
 	os << indent << "Locator Max Level: " << this->LocatorMaxLevel << "\n";
 

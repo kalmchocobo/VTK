@@ -65,7 +65,7 @@ public:
 
 	// Description:
 	// Control how the model bounds are computed. If the ivar AdjustBounds
-	// is set, then the bounds specified (or computed automatically) is modified
+	// is set, then the bounds specified (or computed automatically) are modified
 	// by the fraction given by AdjustDistance. This means that the model
 	// bounds is expanded in each of the x-y-z directions.
 	vtkSetMacro(AdjustBounds,int);
@@ -78,6 +78,21 @@ public:
 	// of the box specified by the model bounds.
 	vtkSetClampMacro(AdjustDistance,double,-1.0,1.0);
 	vtkGetMacro(AdjustDistance,double);
+
+	// Description:
+	// Control how the model bounds are computed. If the ivar AdjustBoundsAbsolute
+	// is set, then the bounds specified (or computed automatically) are modified
+	// by the absolute amount given by AdjustDistanceAbsolute. This means that the model
+	// bounds is expanded in each of the x-y-z directions.
+	vtkSetMacro(AdjustBoundsAbsolute,int);
+	vtkGetMacro(AdjustBoundsAbsolute,int);
+	vtkBooleanMacro(AdjustBoundsAbsolute,int);
+  
+	// Description:
+	// Specify the amount to grow the model bounds (if the ivar AdjustBoundsAbsolute
+	// is set). Applied after the relative adjustment described by AdjustDistance.
+	vtkSetMacro(AdjustDistanceAbsolute,double);
+	vtkGetMacro(AdjustDistanceAbsolute,double);
 
 	// Description:
 	// The outer boundary of the structured point set can be assigned a 
@@ -199,8 +214,8 @@ protected:
 	int Capping;
 	double CapValue;
 	int DataAppended;
-	int AdjustBounds;
-	double AdjustDistance;
+	int AdjustBounds, AdjustBoundsAbsolute;
+	double AdjustDistance, AdjustDistanceAbsolute;
 	/* int ProcessMode; */
 	int LocatorMaxLevel;
 	int OutputScalarType;
