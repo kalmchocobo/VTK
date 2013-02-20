@@ -64,6 +64,7 @@ vtkImplicitModeller::vtkImplicitModeller()
   this->ModelBounds[5] = 0.0;
   this->BoundsComputed = 0;
 
+  this->Spacing = 0;
   this->SampleDimensions[0] = 50;
   this->SampleDimensions[1] = 50;
   this->SampleDimensions[2] = 50;
@@ -842,40 +843,48 @@ void vtkImplicitModeller::EndAppend()
 
 //----------------------------------------------------------------------------
 int vtkImplicitModeller::RequestInformation (
-  vtkInformation * vtkNotUsed(request),
-  vtkInformationVector ** vtkNotUsed( inputVector ),
-  vtkInformationVector *outputVector)
+	vtkInformation * vtkNotUsed(request),
+	vtkInformationVector ** vtkNotUsed( inputVector ),
+	vtkInformationVector *outputVector)
 {
-  // get the info objects
-  vtkInformation* outInfo = outputVector->GetInformationObject(0);
+	// get the info objects
+	vtkInformation* outInfo = outputVector->GetInformationObject(0);
 
-  int i;
-  double ar[3], origin[3];
+	vtkDataObject::SetPointDataActiveScalarInfo(outInfo, this->OutputScalarType, 1);
 
-  vtkDataObject::SetPointDataActiveScalarInfo(outInfo, this->OutputScalarType, 1);
+	// Set volume origin
+	double origin[3];
+	for(int i=0; i<3; i++)
+		origin[i] = this->ModelBounds[2*i];
 
-  outInfo->Set(vtkStreamingDemandDrivenPipeline::WHOLE_EXTENT(),
-               0, this->SampleDimensions[0]-1,
-               0, this->SampleDimensions[1]-1,
-               0, this->SampleDimensions[2]-1);
+	outInfo->Set(vtkDataObject::ORIGIN(), origin, 3);
 
-  for (i=0; i < 3; i++)
-    {
-    origin[i] = this->ModelBounds[2*i];
-    if ( this->SampleDimensions[i] <= 1 )
-      {
-      ar[i] = 1;
-      }
-    else
-      {
-      ar[i] = (this->ModelBounds[2*i+1] - this->ModelBounds[2*i])
-              / (this->SampleDimensions[i] - 1);
-      }
-    }
-  outInfo->Set(vtkDataObject::ORIGIN(),origin,3);
-  outInfo->Set(vtkDataObject::SPACING(),ar,3);
+	// Set data spacing
+	double vSpacing[3];
+	if(this->Spacing > 0)
+	{
+		for (int i=0; i<3; i++)
+			vSpacing[i] = this->Spacing;
+	} else {
+		for (int i=0; i<3; i++)
+			vSpacing[i] = (this->ModelBounds[2*i+1] - this->ModelBounds[2*i]) / (this->SampleDimensions[i] - 1);
+	}
 
-  return 1;
+	outInfo->Set(vtkDataObject::SPACING(),vSpacing,3);
+
+	// Set extent
+	if(this->Spacing > 0)
+	{
+		for (int i=0; i<3; i++)
+			this->SampleDimensions[i] = std::ceil(0.5+((this->ModelBounds[2*i+1]-this->ModelBounds[2*i])/vSpacing[i]));
+	}
+
+	outInfo->Set(vtkStreamingDemandDrivenPipeline::WHOLE_EXTENT(),
+				 0, this->SampleDimensions[0]-1,
+				 0, this->SampleDimensions[1]-1,
+				 0, this->SampleDimensions[2]-1);
+
+	return 1;
 }
 
 //----------------------------------------------------------------------------
@@ -971,22 +980,38 @@ double vtkImplicitModeller::ComputeModelBounds(vtkDataSet *input)
 
   maxDist *= this->MaximumDistance;
 
-  // Set volume origin and data spacing
-  output->SetOrigin(this->ModelBounds[0],
-                    this->ModelBounds[2],
-                    this->ModelBounds[4]);
-
-  for (i=0; i<3; i++)
-    {
-    tempd[i] = (this->ModelBounds[2*i+1] - this->ModelBounds[2*i])
-      / (this->SampleDimensions[i] - 1);
-    }
-  output->SetSpacing(tempd);
-
   vtkInformation *outInfo = this->GetExecutive()->GetOutputInformation(0);
-  outInfo->Set(vtkDataObject::ORIGIN(),this->ModelBounds[0],
-               this->ModelBounds[2], this->ModelBounds[4]);
-  outInfo->Set(vtkDataObject::SPACING(),tempd,3);
+
+	// Set volume origin
+	output->SetOrigin(this->ModelBounds[0], this->ModelBounds[2], this->ModelBounds[4]);
+	outInfo->Set(vtkDataObject::ORIGIN(), this->ModelBounds[0], this->ModelBounds[2], this->ModelBounds[4]);
+
+	// Set data spacing
+	double vSpacing[3];
+	if(this->Spacing > 0)
+	{
+		for (i=0; i<3; i++)
+			vSpacing[i] = this->Spacing;
+	} else {
+		for (i=0; i<3; i++)
+			vSpacing[i] = (this->ModelBounds[2*i+1] - this->ModelBounds[2*i]) / (this->SampleDimensions[i] - 1);
+	}
+
+	output->SetSpacing(vSpacing);
+	outInfo->Set(vtkDataObject::SPACING(),vSpacing,3);
+
+	// Compute SampleDimensions
+	if(this->Spacing > 0)
+	{
+		for (i=0; i<3; i++)
+			this->SampleDimensions[i] = std::ceil(0.5+((this->ModelBounds[2*i+1]-this->ModelBounds[2*i])/vSpacing[i]));
+	}
+
+	output->SetExtent(0,this->SampleDimensions[0]-1,0,this->SampleDimensions[1]-1,0,this->SampleDimensions[2]-1);
+	outInfo->Set(vtkStreamingDemandDrivenPipeline::WHOLE_EXTENT(),
+				 0, this->SampleDimensions[0]-1,
+				 0, this->SampleDimensions[1]-1,
+				 0, this->SampleDimensions[2]-1);
 
   this->BoundsComputed = 1;
   this->InternalMaxDistance = maxDist;

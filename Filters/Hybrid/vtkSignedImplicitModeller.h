@@ -46,6 +46,11 @@ public:
 	double ComputeModelBounds(vtkDataSet *input = NULL);
 
 	// Description:
+	// Set/Get the voxel spacing.
+	vtkSetMacro(Spacing,double);
+	vtkGetMacro(Spacing,double);
+
+	// Description:
 	// Set/Get the i-j-k dimensions on which to sample distance function.
 	vtkGetVectorMacro(SampleDimensions,int,3);
 	void SetSampleDimensions(int i, int j, int k);
@@ -208,6 +213,7 @@ protected:
 	vtkMultiThreader *Threader;
 	int              NumberOfThreads;
 
+	double Spacing;
 	int SampleDimensions[3];
 	double MaximumDistance;
 	double ModelBounds[6];
