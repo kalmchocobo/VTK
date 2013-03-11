@@ -9,6 +9,7 @@ set(Module_SRCS
   vtkGridTransform.cxx
   vtkImageToPolyDataFilter.cxx
   vtkImplicitModeller.cxx
+  vtkSignedImplicitModeller.cxx
   vtkPCAAnalysisFilter.cxx
   vtkPolyDataSilhouette.cxx
   #vtkPolyDataToImageStencil.cxx

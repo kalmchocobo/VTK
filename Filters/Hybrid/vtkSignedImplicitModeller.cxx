@@ -83,6 +83,7 @@ vtkSignedImplicitModeller::vtkSignedImplicitModeller()
 	this->AdjustDistance = 0.0125;
 	this->AdjustBoundsAbsolute = 0;
 	this->AdjustDistanceAbsolute = 0.0;
+	this->UseSegmentation = 0;
 
 	// this->ProcessMode = VTK_CELL_MODE;
 	this->LocatorMaxLevel = 5;
@@ -586,13 +587,11 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 											vtkDataSet *input, vtkImageData *outData,
 											double maxDistance, OT *)
 {
-	vtkPolyData * poly = vtkPolyData::SafeDownCast(input);
+	double const * const spacing = outData->GetSpacing();
+	double const * const origin = outData->GetOrigin();    
+	int    const * const sampleDimensions = self->GetSampleDimensions();
 
-	double * spacing = outData->GetSpacing();
-	double * origin = outData->GetOrigin();    
-	int * sampleDimensions = self->GetSampleDimensions();
-
-	double maxDistance2 = maxDistance * maxDistance;    
+	double const maxDistance2 = maxDistance * maxDistance;    
 	
 	// so we know how to scale if desired
 	double scaleFactor = 0; // 0 used to indicate not scaling
@@ -610,7 +609,7 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 
 	// compute face and vertex normals if we don't have them already
 	vtkSmartPointer<vtkPolyDataNormals> normalsGen = vtkSmartPointer<vtkPolyDataNormals>::New();
-	normalsGen->SetInputData(poly);
+	normalsGen->SetInputData(input);
 	normalsGen->ComputeCellNormalsOn();
 	normalsGen->ComputePointNormalsOn();
 
@@ -624,88 +623,106 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 	normalsGen->Update();
 
 	// get updated version of input with all normals calculated
-	poly = normalsGen->GetOutput();
+	vtkSmartPointer<vtkPolyData> poly = vtkPolyData::SafeDownCast(normalsGen->GetOutput());
 
 	// obtain point/face mappings ***
-	//poly->BuildLinks();
+	// poly->BuildLinks();
 
 	//
 	// Traverse all cells; computing distance function on volume points.
 	//
 	
-	int updateTime = poly->GetNumberOfCells() / 50;  // update every 2%
-	if (updateTime < 1)
-    {
-		updateTime = 1;
-    }
+	int const updateTime = std::max(1, (int)((double)poly->GetNumberOfCells() / (double)50.0));  // update every 2%
 
 	// for every cell (triangle in the mesh)
-	for (vtkIdType cellNum=0; cellNum < poly->GetNumberOfCells(); cellNum++)
+	for (vtkIdType cellNum = 0; cellNum < poly->GetNumberOfCells(); cellNum++)
     {
 		// compute volume of space in which this triangle could be a closest point
 		// (maxDistance is the maximum distance in which SDF calculated)
-		vtkCell * cell = poly->GetCell(cellNum);
+		vtkCell * const cell = poly->GetCell(cellNum);
+
+		// check that all of the points have color (255, 255, 255)
+		bool IsSegment = false;
+
+		if( self->GetUseSegmentation())
+		{
+			double color[9];
+			for(int i=0; i<3; i++)
+				input->GetPointData()->GetScalars()->GetTuple(cell->GetPointIds()->GetId(i),&color[3*i]);
+			for(int i=0; i<9; i++)
+				IsSegment = IsSegment or (color[i] < 255.0);
+		}
+
+		if( !self->GetUseSegmentation() or !IsSegment )
+		{
+	
+			// get the 3 vertices
+			double p0[3], p1[3], p2[3];
+			cell->GetPoints()->GetPoint(0, p0);
+			cell->GetPoints()->GetPoint(1, p1);
+			cell->GetPoints()->GetPoint(2, p2);
 		
-		double adjBounds[6];
-		double * bounds = cell->GetBounds();
-		for (int i=0; i<3; i++)
-		{
-			adjBounds[2*i] = bounds[2*i] - maxDistance;
-			adjBounds[2*i+1] = bounds[2*i+1] + maxDistance;
-		}
-
-		// compute range of voxels to test
-		int outExt[6];
-		for (int i=0; i<3; i++)
-		{
-			outExt[i*2]     = (int) ((double)(adjBounds[2*i]   - origin[i]) / spacing[i]);
-			outExt[i*2 + 1] = (int) ((double)(adjBounds[2*i+1] - origin[i]) / spacing[i]);
-			if (outExt[i*2] < 0)
+			double adjBounds[6];
+			double * const bounds = cell->GetBounds();
+			for (int i=0; i<3; i++)
 			{
-				outExt[i*2] = 0;
+				adjBounds[2*i] = bounds[2*i] - maxDistance;
+				adjBounds[2*i+1] = bounds[2*i+1] + maxDistance;
 			}
-			if (outExt[i*2 + 1] >= sampleDimensions[i])
-			{
-				outExt[i*2 + 1] = sampleDimensions[i] - 1;
-			}
-		}
 
-		// create iterator over SDF image outData in range of voxels to test outExt
-		vtkImageIterator<OT> outIt(outData, outExt);
-
-		// loop through all voxels to test
-		// compute x, the centre of the voxel
-		double x[3];
-		for (int k = outExt[4]; k <= outExt[5]; k++) 
-		{
-			x[2] = spacing[2] * k + origin[2];
-			for (int j = outExt[2]; j <= outExt[3]; j++)
+			// compute range of voxels to test
+			int outExt[6];
+			for (int i=0; i<3; i++)
 			{
-				x[1] = spacing[1] * j + origin[1];
-				OT* outSI = outIt.BeginSpan();
-				for (int i = outExt[0]; i <= outExt[1]; i++) 
+				outExt[i*2]     = (int) ((double)(adjBounds[2*i]   - origin[i]) / spacing[i]);
+				outExt[i*2 + 1] = (int) ((double)(adjBounds[2*i+1] - origin[i]) / spacing[i]);
+				if (outExt[i*2] < 0)
 				{
-					x[0] = spacing[0] * i + origin[0];
-
-					// get current distance and distance2 at this voxel
-					double distance, prevDistance2;
-					self->GetOutputDistance(*outSI, distance, prevDistance2, toDoubleScaleFactor);
-
-					// compute distance to closest point on the cell from x
-					// if computation occurs without numerical error, 
-					// if distance less than current distance and if distance less than maximum distance
-					double closestPoint[3];
-					if ( self->ComputeSignedDistance(poly, cellNum, x, closestPoint, distance) != -1 and
-						 distance*distance < prevDistance2 and
-						 distance*distance <= maxDistance2 ) 
-					{
-						// set distance at this voxel in SDF image
-						self->SetOutputDistance(distance, outSI, capValue, scaleFactor);
-						
-					}
-					outSI++;
+					outExt[i*2] = 0;
 				}
-				outIt.NextSpan();
+				if (outExt[i*2 + 1] >= sampleDimensions[i])
+				{
+					outExt[i*2 + 1] = sampleDimensions[i] - 1;
+				}
+			}
+
+			// create iterator over SDF image outData in range of voxels to test outExt
+			vtkImageIterator<OT> outIt(outData, outExt);
+
+			// loop through all voxels to test
+			// compute x, the centre of the voxel
+			double x[3];
+			for (int k = outExt[4]; k <= outExt[5]; k++) 
+			{
+				x[2] = spacing[2] * k + origin[2];
+				for (int j = outExt[2]; j <= outExt[3]; j++)
+				{
+					x[1] = spacing[1] * j + origin[1];
+					OT* outSI = outIt.BeginSpan();
+					for (int i = outExt[0]; i <= outExt[1]; i++) 
+					{
+						x[0] = spacing[0] * i + origin[0];
+
+						// get current distance and distance2 at this voxel
+						double distance, prevDistance2;
+						self->GetOutputDistance(*outSI, distance, prevDistance2, toDoubleScaleFactor);
+
+						// compute distance to closest point on the cell from x
+						// if computation occurs without numerical error, 
+						// if distance less than current distance and if distance less than maximum distance
+						double closestPoint[3];
+						if ( self->ComputeSignedDistance(poly, cellNum, x, closestPoint, distance) != -1 and
+							 distance*distance < prevDistance2 and
+							 distance*distance <= maxDistance2 ) 
+						{
+							// set distance at this voxel in SDF image
+							self->SetOutputDistance(distance, outSI, capValue, scaleFactor);
+						
+						}
+						outSI++;
+					}
+					outIt.NextSpan();
+				}
 			}
 		}
 
@@ -713,7 +730,7 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 		{
 			self->UpdateProgress(double(cellNum + 1) / poly->GetNumberOfCells());
 		}
-    }
+	}
 }
 
 // Append a data set to the existing output. To use this function,

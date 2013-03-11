@@ -71,6 +71,7 @@ set(Module_SRCS
   vtkHyperTreeGrid.cxx
   vtkImageData.cxx
   vtkImageIterator.cxx
+  vtkImageTraversal.cxx
   vtkImplicitBoolean.cxx
   vtkImplicitDataSet.cxx
   vtkImplicitFunctionCollection.cxx
@@ -99,6 +100,8 @@ set(Module_SRCS
   vtkMultiPieceDataSet.cxx
   vtkMutableDirectedGraph.cxx
   vtkMutableUndirectedGraph.cxx
+  vtkNeighborhood.cxx
+  vtkNeighborhoodIterator.cxx
   vtkNonLinearCell.cxx
   vtkNonMergingPointLocator.cxx
   vtkOctreePointLocator.cxx
@@ -110,6 +113,8 @@ set(Module_SRCS
   vtkPerlinNoise.cxx
   vtkPiecewiseFunction.cxx
   vtkPixel.cxx
+  vtkPixelIterator.cxx
+  vtkPixelList.cxx
   vtkPlaneCollection.cxx
   vtkPlane.cxx
   vtkPlanes.cxx
@@ -138,6 +143,7 @@ set(Module_SRCS
   vtkQuadraticWedge.cxx
   vtkQuadratureSchemeDefinition.cxx
   vtkQuadric.cxx
+  vtkRectangularNeighborhood.cxx
   vtkRectilinearGrid.cxx
   vtkReebGraph.cxx
   vtkReebGraphSimplificationMetric.cxx
@@ -147,6 +153,7 @@ set(Module_SRCS
   vtkSmoothErrorMetric.cxx
   vtkSphere.cxx
   vtkSpline.cxx
+  vtkSquareNeighborhood.cxx
   vtkStructuredData.cxx
   vtkStructuredExtent.cxx
   vtkStructuredGrid.cxx
@@ -219,7 +226,7 @@ set_source_files_properties(
   vtkGenericAdaptorCell
   vtkGenericCellIterator
   vtkGenericCellTessellator
-  vtkGenericDataSet
+  vtkGenericDataSet<
   vtkGenericPointIterator
   vtkGenericSubdivisionErrorMetric
   vtkGraph

@@ -100,6 +100,13 @@ public:
 	vtkGetMacro(AdjustDistanceAbsolute,double);
 
 	// Description:
+	// Specify whether to compute SDF from complete or segmented mesh. SDF only computed using
+	// points on the segmented with color (255,255,255).
+	vtkSetMacro(UseSegmentation,int);
+	vtkGetMacro(UseSegmentation,int);
+	vtkBooleanMacro(UseSegmentation,int);
+
+	// Description:
 	// The outer boundary of the structured point set can be assigned a 
 	// particular value. This can be used to close or "cap" all surfaces.
 	vtkSetMacro(Capping,int);
@@ -222,6 +229,7 @@ protected:
 	int DataAppended;
 	int AdjustBounds, AdjustBoundsAbsolute;
 	double AdjustDistance, AdjustDistanceAbsolute;
+	int UseSegmentation;
 	/* int ProcessMode; */
 	int LocatorMaxLevel;
 	int OutputScalarType;
