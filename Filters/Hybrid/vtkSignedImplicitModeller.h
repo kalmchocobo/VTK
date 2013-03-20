@@ -17,8 +17,13 @@
 #ifndef __vtkSignedImplicitModeller_h
 #define __vtkSignedImplicitModeller_h
 
+#include <list>
+#include <vector>
+#include <math.h>
+
 #include "vtkFiltersHybridModule.h" // For export macro
 #include "vtkImageAlgorithm.h"
+#include "vtkMath.h"
 #include "vtkPolyData.h"
 
 /* #define VTK_VOXEL_MODE   0 */
@@ -31,6 +36,107 @@ class vtkMultiThreader;
 class VTKFILTERSHYBRID_EXPORT vtkSignedImplicitModeller : public vtkImageAlgorithm 
 {
 public:
+	class Barycentric
+	{
+	protected:
+		bool initialized;
+		double origin[3], dir0[3], dir1[3], p0_plane[2], p1_plane[2], p2_plane[2];
+		double det;
+
+		static void normalize(double * const x)
+		{
+			double length = 0.0;
+			for(int i=0; i<3; i++)
+				length += x[i]*x[i];
+
+			length = std::sqrt(length);
+			for(int i=0; i<3; i++)
+				x[i] /= length;
+			
+			return;
+		}
+
+		void planar(double const * const x, double * const p) const
+		{
+			for(int i=0; i<2; i++)
+				p[i] = 0.0;
+
+			for(int i=0; i<3; i++)
+			{
+				p[0] += dir0[i] *(x[i] - origin[i]);
+				p[1] += dir1[i] *(x[i] - origin[i]);
+			}
+
+			return;
+		}
+
+	public:
+
+		Barycentric(double const * const p0, double const * const p1, double const * const p2)
+		{
+			// compute origin
+			for(int i=0; i<3; i++)
+				origin[i] = p2[i];
+			
+			// compute first direction in the plane, dir0
+			for(int i=0; i<3; i++)
+				dir0[i] = p1[i] - origin[i];
+			normalize(dir0);
+
+			// compute second direction in the plane, dir1
+			double dot_product = 0.0;
+			for(int i=0; i<3; i++)
+			{
+				dir1[i] = p0[i] - origin[i];
+				dot_product += dir0[i]*dir1[i];
+			}
+			for(int i=0; i<3; i++)
+				dir1[i] -= dot_product*dir0[i];
+			normalize(dir1);
+
+			// p2_plane is always (0,0)
+			p2_plane[0] = 0.0;
+			p2_plane[1] = 0.0;
+			// p1_plane is always (a,0)
+			planar(p1, p1_plane);
+			planar(p0, p0_plane);
+
+			// compute det
+			det = -1.0*p0_plane[1]*p1_plane[0];
+
+			// check that matrix is invertible
+			if( (det*det) < 1e-9 )
+				initialized = false;
+			else
+				initialized = true;
+		}
+
+		void compute(double const * const x, double * const b) const
+	   	{
+			for(int i=0; i<3; i++)
+				b[i] = 0.0;
+
+			if(initialized)
+			{
+				// convert x to planar co-ordinates
+				double x_plane[2];
+				planar(x, x_plane);
+
+				// solve for Barycentric co-ordinates
+				b[0] = vtkMath::Determinant2x2(x_plane  , p1_plane) / det;
+				b[1] = vtkMath::Determinant2x2(p0_plane , x_plane)  / det;
+				b[2] = 1.0 - (b[0] + b[1]);
+			}
+
+			return;
+		}
+
+		bool get_initialized() const
+		{
+			return initialized;
+		}
+	};
+
 	vtkTypeMacro(vtkSignedImplicitModeller,vtkImageAlgorithm);
 	void PrintSelf(ostream& os, vtkIndent indent);
 
@@ -102,9 +208,8 @@ public:
 	// Description:
 	// Specify whether to compute SDF from complete or segmented mesh. SDF only computed using
 	// points on the segmented with color (255,255,255).
-	vtkSetMacro(UseSegmentation,int);
-	vtkGetMacro(UseSegmentation,int);
-	vtkBooleanMacro(UseSegmentation,int);
+	void SetBoxesSegmentation(std::list<std::vector<double> > const & _BoxesSegmentation);
+	void GetBoxesSegmentation(std::list<std::vector<double> > & _BoxesSegmentation);
 
 	// Description:
 	// The outer boundary of the structured point set can be assigned a 
@@ -203,7 +308,7 @@ public:
 	void GetOutputDistance(OT outputValue, double & distance, double & distance2, double scaleFactor=0);
 
 	// computation of signed distance function
-	int ComputeSignedDistance(vtkPolyData * input, int cellNum, double x[3], double cp[3], double & sdist);
+	int ComputeSignedDistance(vtkPolyData * input, int cellNum, Barycentric const & barycentric, double x[3], double & sdist);
 
 protected:
 	vtkSignedImplicitModeller();
@@ -229,7 +334,8 @@ protected:
 	int DataAppended;
 	int AdjustBounds, AdjustBoundsAbsolute;
 	double AdjustDistance, AdjustDistanceAbsolute;
-	int UseSegmentation;
+	std::list<std::vector<double> > BoxesSegmentation;
+
 	/* int ProcessMode; */
 	int LocatorMaxLevel;
 	int OutputScalarType;

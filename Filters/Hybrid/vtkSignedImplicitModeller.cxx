@@ -12,6 +12,7 @@
   =========================================================================*/
 #include "vtkSignedImplicitModeller.h"
 
+#include "vtkBox.h"
 #include "vtkCell.h"
 #include "vtkCellData.h"
 #include "vtkCellLocator.h"
@@ -83,7 +84,7 @@ vtkSignedImplicitModeller::vtkSignedImplicitModeller()
 	this->AdjustDistance = 0.0125;
 	this->AdjustBoundsAbsolute = 0;
 	this->AdjustDistanceAbsolute = 0.0;
-	this->UseSegmentation = 0;
+	this->BoxesSegmentation.clear();
 
 	// this->ProcessMode = VTK_CELL_MODE;
 	this->LocatorMaxLevel = 5;
@@ -101,19 +102,20 @@ vtkSignedImplicitModeller::~vtkSignedImplicitModeller()
     }
 }
 
-int vtkSignedImplicitModeller::ComputeSignedDistance(vtkPolyData * input, int cellNum, double x[3], double cp[3], double & sdist)
+int vtkSignedImplicitModeller::ComputeSignedDistance(vtkPolyData * input, int cellNum, Barycentric const & barycentric, double x[3], double & sdist)
 {
 	// initialize outputs
-	for(int i=0; i<3; i++)
-		cp[i]=0.0;
 	sdist = std::numeric_limits<double>::max();
+
+	// first find the closest point
+	double cp[3], cp_barycentric[3];
 
 	// get cell
 	vtkCell * cell = input->GetCell(cellNum);
 
-	// get face normal
-	double fNormal[3];
-	input->GetCellData()->GetNormals()->GetTuple(cellNum,fNormal);
+	// get plane normal
+	double planeNormal[3];
+	input->GetCellData()->GetNormals()->GetTuple(cellNum,planeNormal);
 	
 	// get the 3 vertices
 	double p0[3], p1[3], p2[3];
@@ -121,333 +123,91 @@ int vtkSignedImplicitModeller::ComputeSignedDistance(vtkPolyData * input, int ce
 	cell->GetPoints()->GetPoint(1, p1);
 	cell->GetPoints()->GetPoint(2, p2);
 
+	/* check for case that closest point is inside the triangle */
+
 	// project point x to plane, closest point is cp
-	vtkPlane::GeneralizedProjectPoint(x, p0, fNormal, cp);
-    
-	// compute Barycentric co-ordinates of cp
-	// we are on the plane so only 2 degrees of freedom
+	double x_p[3];
+	vtkPlane::GeneralizedProjectPoint(x, p2, planeNormal, x_p);
 
-	// remove the 1D in which the plane has least (or no) variation
-	int idx=0;
-	double maxComponent=0.0;
-	for (int i=0; i<3; i++)
-    {
-		// avoid expensive call to fabs
-		double fabsn;
-		if (fNormal[i] < 0)
-			fabsn = -fNormal[i];
-		else
-			fabsn = fNormal[i];
-
-		if (fabsn > maxComponent)
-		{
-			maxComponent = fabsn;
-			idx = i;
-		}
-    }
-
-	int j=0;
-	int indices[2];
-	for (int i=0; i<3; i++)  
-    {
-		if ( i != idx )
-			indices[j++] = i;
-    }
-  
-	// construct the linear equations
-	double c1[3], c2[3], rhs[3];
-	for (int i=0; i<2; i++)
-    {  
-		rhs[i] = cp[indices[i]] - p2[indices[i]];
-		c1[i]  = p0[indices[i]] - p2[indices[i]];
-		c2[i]  = p1[indices[i]] - p2[indices[i]];
-    }
+	// compute Barycentric co-ordinates
+	double x_p_b[3];
+	barycentric.compute(x_p,x_p_b);
 	
-	// check that matrix is invertible
-	double det;
-	if ( (det = vtkMath::Determinant2x2(c1,c2))==0.0 )
-		return -1;
-
-	// solve for Barycentric co-ordinates
-	double bcoords[3];
-	bcoords[0] = vtkMath::Determinant2x2(rhs,c2) / det;
-	bcoords[1] = vtkMath::Determinant2x2(c1,rhs) / det;
-	bcoords[2] = 1.0 - (bcoords[0] + bcoords[1]);
-
-	// if closest point is within the face
-	// to understand, consider p0=(1,0), p1=(0,1) and p2=(0,0)
-	double vec[3], normal[3];
-	bool failed = true;
-	if ( bcoords[0] >= 0.0 and bcoords[0] <= 1.0 and
-		 bcoords[1] >= 0.0 and bcoords[1] <= 1.0 and
-		 bcoords[2] >= 0.0 and bcoords[2] <= 1.0 )
+	if ( x_p_b[0] >= 0.0 and x_p_b[0] <= 1.0 and
+		 x_p_b[1] >= 0.0 and x_p_b[1] <= 1.0 and
+		 x_p_b[2] >= 0.0 and x_p_b[2] <= 1.0 )
     {
-		// cp already computed is also the bounded closest point
-		sdist = vtkMath::Distance2BetweenPoints(cp,x);
-
-		// normal to compute sign
+		// closest point in the triangle is x_plane
 		for (int i=0; i<3; i++)
-			normal[i] = fNormal[i];
-
-		failed = false;
-    }
+		{
+			cp[i]             = x_p[i];
+			cp_barycentric[i] = x_p_b[i];
+		}
+	}
 	else
-    {
-		double * closest, closestPoint1[3], closestPoint2[3], normal2[3];
-		double dist2Point, dist2Line1, dist2Line2, t;
-		vtkSmartPointer<vtkIdList> neighbors = vtkSmartPointer<vtkIdList>::New(); 
-		if ( bcoords[1] < 0.0 && bcoords[2] < 0.0 )
-		{
-			// closest point p0 or on edges from p0
-			dist2Point = vtkMath::Distance2BetweenPoints(x,p0);
-			dist2Line1 = vtkLine::DistanceToLine(x,p0,p2,t,closestPoint1);
-			dist2Line2 = vtkLine::DistanceToLine(x,p0,p1,t,closestPoint2);
+	{
+		/* otherwise, closest point lies on boundary of triangle */
 
-			if(dist2Line1 < dist2Point and dist2Line1 < dist2Line2)
-			{
-				// closest point on edge p0-p2
-				for (int i=0; i<3; i++)
-					cp[i] = closestPoint1[i];
+		double dist[3], t[3], cp_l[9];
 
-				sdist = dist2Line1;
-				
-				// normal to compute sign
-				// input->GetCellEdgeNeighbors(cellNum,cell->GetPointIds()->GetId(0),cell->GetPointIds()->GetId(2),neighbors);
-				// input->GetCellData()->GetNormals()->GetTuple(neighbors->GetId(0),normal);
-				// for (int i=0; i<3; i++)
-				// 	normal[i] += fNormal[i];
+		dist[0] = vtkLine::DistanceToLine(x,p2,p1,t[0],&(cp_l[0]));
+		dist[1] = vtkLine::DistanceToLine(x,p2,p0,t[1],&(cp_l[3]));
+		dist[2] = vtkLine::DistanceToLine(x,p1,p0,t[2],&(cp_l[6]));
 
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(0),normal);
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(2),normal2);
-				for (int i=0; i<3; i++)
-					normal[i] += normal2[i];
-			}
-			else if(dist2Line2 < dist2Point and dist2Line2 < dist2Line1)
-			{
-				// closest point on edge p0-p1
-				for (int i=0; i<3; i++)
-					cp[i] = closestPoint2[i];
+		// find closest line
+		int closest = 0;
+		if(dist[1] < dist[0])
+			closest = 1;
+		if(dist[2] < dist[1] and dist[2] < dist[0])
+			closest = 2;
 
-				sdist = dist2Line2;
+		for (int i=0; i<3; i++)
+			cp[i] = cp_l[3*closest + i];
 
-				// normal to compute sign
-				// input->GetCellEdgeNeighbors(cellNum,cell->GetPointIds()->GetId(0),cell->GetPointIds()->GetId(1),neighbors);
-				// input->GetCellData()->GetNormals()->GetTuple(neighbors->GetId(0),normal);
-				// for (int i=0; i<3; i++)
-				// 	normal[i] += fNormal[i];
+		barycentric.compute(cp, cp_barycentric);
+	}
 
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(0),normal);
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(1),normal2);
-				for (int i=0; i<3; i++)
-					normal[i] += normal2[i];
-			}
-			else
-			{
-				// closest point p0
-				for (int i=0; i<3; i++)
-					cp[i] = p0[i];
+	// we now have cp and cp_barycentric
 
-				sdist = dist2Point;
+	// compute distance from x to cp
+	sdist = std::sqrt(vtkMath::Distance2BetweenPoints(x,cp));
 
-				// normal to compute sign
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(0),normal);
-			}
+	// compute corresponding normal
+	double normal[3];
 
-			failed = false;
-		}
-		else if ( bcoords[0] < 0.0 && bcoords[2] < 0.0 )
-		{
-			// closest point p1 or on edges from p1
-			dist2Point = vtkMath::Distance2BetweenPoints(x,p1);
-			dist2Line1 = vtkLine::DistanceToLine(x,p1,p0,t,closestPoint1);
-			dist2Line2 = vtkLine::DistanceToLine(x,p1,p2,t,closestPoint2);
-			
-			if(dist2Line1 < dist2Point and dist2Line1 < dist2Line2)
-			{
-				// closest point on edge p1-p0
-				for (int i=0; i<3; i++)
-					cp[i] = closestPoint1[i];
+	// get the 3 vertex normals
+	// double vNormal[9];
+	// for(int i=0; i<3; i++)
+	// 	input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(i),&(vNormal[3*i]));
 
-				sdist = dist2Line1;
+	// for each dimension
+	for(int i=0; i<3; i++)
+	{
+		normal[i] = planeNormal[i];
 
-				// normal to compute sign
-				// input->GetCellEdgeNeighbors(cellNum,cell->GetPointIds()->GetId(0),cell->GetPointIds()->GetId(1),neighbors);
-				// input->GetCellData()->GetNormals()->GetTuple(neighbors->GetId(0),normal);
-				// for (int i=0; i<3; i++)
-				// 	normal[i] += fNormal[i];
+		// normal[i] = 0.0;
 
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(1),normal);
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(0),normal2);
-				for (int i=0; i<3; i++)
-					normal[i] += normal2[i];
-			}
-			else if(dist2Line2 < dist2Point and dist2Line2 < dist2Line1)
-			{
-				// closest point on edge p1-p2
-				for (int i=0; i<3; i++)
-					cp[i] = closestPoint2[i];
-
-				sdist = dist2Line2;
-
-				// normal to compute sign
-				// input->GetCellEdgeNeighbors(cellNum,cell->GetPointIds()->GetId(2),cell->GetPointIds()->GetId(1),neighbors);
-				// input->GetCellData()->GetNormals()->GetTuple(neighbors->GetId(0),normal);
-				// for (int i=0; i<3; i++)
-				// 	normal[i] += fNormal[i];
-
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(1),normal);
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(2),normal2);
-				for (int i=0; i<3; i++)
-					normal[i] += normal2[i];
-			}
-			else
-			{
-				// closest point p1
-				for (int i=0; i<3; i++)
-					cp[i] = p1[i];
-
-				sdist = dist2Point;
-
-				// normal to compute sign
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(1),normal);
-			}
-
-			failed = false;
-		}
-		else if ( bcoords[0] < 0.0 && bcoords[1] < 0.0 )
-		{
-			// closest point p2 or on edges from p2
-			dist2Point = vtkMath::Distance2BetweenPoints(x,p2);
-			dist2Line1 = vtkLine::DistanceToLine(x,p2,p0,t,closestPoint1);
-			dist2Line2 = vtkLine::DistanceToLine(x,p2,p1,t,closestPoint2);
-			
-			if(dist2Line1 < dist2Point and dist2Line1 < dist2Line2)
-			{
-				// closest point on edge p2-p0
-				for (int i=0; i<3; i++)
-					cp[i] = closestPoint1[i];
-
-				sdist = dist2Line1;
-
-				// normal to compute sign
-				// input->GetCellEdgeNeighbors(cellNum,cell->GetPointIds()->GetId(2),cell->GetPointIds()->GetId(0),neighbors);
-				// input->GetCellData()->GetNormals()->GetTuple(neighbors->GetId(0),normal);
-				// for (int i=0; i<3; i++)
-				// 	normal[i] += fNormal[i];
-
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(2),normal);
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(0),normal2);
-				for (int i=0; i<3; i++)
-					normal[i] += normal2[i];
-			}
-			else if(dist2Line2 < dist2Point and dist2Line2 < dist2Line1)
-			{
-				// closest point on edge p2-p1
-				for (int i=0; i<3; i++)
-					cp[i] = closestPoint2[i];
-
-				sdist = dist2Line2;
-
-				// normal to compute sign
-				// input->GetCellEdgeNeighbors(cellNum,cell->GetPointIds()->GetId(2),cell->GetPointIds()->GetId(1),neighbors);
-				// input->GetCellData()->GetNormals()->GetTuple(neighbors->GetId(0),normal);
-				// for (int i=0; i<3; i++)
-				// 	normal[i] += fNormal[i];
-
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(2),normal);
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(1),normal2);
-				for (int i=0; i<3; i++)
-					normal[i] += normal2[i];
-			} 
-			else 
-			{
-				// closest point p2
-				for (int i=0; i<3; i++)
-					cp[i] = p2[i];
-
-				sdist = dist2Point;
-
-				// normal to compute sign
-				input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(2),normal);
-			}
-
-			failed = false;
-		}
-		else if ( bcoords[0] < 0.0 )
-		{
-			// closest point on edge p1-p2
-			sdist = vtkLine::DistanceToLine(x,p1,p2,t,cp);
-
-			// normal to compute sign
-			// input->GetCellEdgeNeighbors(cellNum,cell->GetPointIds()->GetId(2),cell->GetPointIds()->GetId(1),neighbors);
-			// input->GetCellData()->GetNormals()->GetTuple(neighbors->GetId(0),normal);
-			// for (int i=0; i<3; i++)
-			// 	normal[i] += fNormal[i];
-
-			input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(1),normal);
-			input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(2),normal2);
-			for (int i=0; i<3; i++)
-				normal[i] += normal2[i];
-
-			failed = false;
-		}
-		else if ( bcoords[1] < 0.0 )
-		{
-			// closest point on edge p0-p2
-			sdist = vtkLine::DistanceToLine(x,p0,p2,t,cp);
-
-			// normal to compute sign
-			// input->GetCellEdgeNeighbors(cellNum,cell->GetPointIds()->GetId(2),cell->GetPointIds()->GetId(0),neighbors);
-			// input->GetCellData()->GetNormals()->GetTuple(neighbors->GetId(0),normal);
-			// for (int i=0; i<3; i++)
-			// 	normal[i] += fNormal[i];
-
-			input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(0),normal);
-			input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(2),normal2);
-			for (int i=0; i<3; i++)
-				normal[i] += normal2[i];
-
-			failed = false;
-		}
-		else if ( bcoords[2] < 0.0 )
-		{
-			// closest point on edge p0-p1
-			sdist = vtkLine::DistanceToLine(x,p0,p1,t,cp);
-
-			// normal to compute sign
-			// input->GetCellEdgeNeighbors(cellNum,cell->GetPointIds()->GetId(1),cell->GetPointIds()->GetId(0),neighbors);
-			// input->GetCellData()->GetNormals()->GetTuple(neighbors->GetId(0),normal);
-			// for (int i=0; i<3; i++)
-			// 	normal[i] += fNormal[i];
-
-			input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(0),normal);
-			input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(1),normal2);
-			for (int i=0; i<3; i++)
-				normal[i] += normal2[i];
-
-			failed = false;
-		}
-    }
-
-	if(failed)
-		return -1;
-	
-	// compute distance
-	sdist = std::sqrt(sdist);
+		// // for each vertex of the triangle
+		// for(int j=0; j<3; j++)
+		// 	normal[i] += cp_barycentric[j] * vNormal[3*j + i];
+	}
 
 	// compute sign
-	vtkMath::Subtract(cp,x,vec);
-	vtkMath::Normalize(vec);
-	// if(std::fabs(vtkMath::Dot(vec,normal)) < 0.1)
-	// 	return -1;
-	// else 
-	if(vtkMath::Dot(vec,normal) > 0)
+	double diffvec[3];
+	vtkMath::Subtract(x,cp,diffvec);
+
+	double dot_product = vtkMath::Dot(diffvec,normal);
+	
+	if(dot_product < 0)
 		sdist *= -1.0;
 
-	return 1;
-
+	//std::printf("proposed_distance %f dot_product %f bcoords %f %f %f vec %f %f %f normal %f %f %f cp %f %f %f \n",sdist,vtkMath::Dot(diffvec,normal),cp_barycentric[0],cp_barycentric[1],cp_barycentric[2],diffvec[0],diffvec[1],diffvec[2],normal[0],normal[1],normal[2],cp[0],cp[1],cp[2]);
+	
+	if( (dot_product)*(dot_product) < 1e-12)
+		return 0;
+	else
+		return 1;
 }
-
 
 void vtkSignedImplicitModeller::SetOutputScalarType(int type)
 { 
@@ -507,6 +267,18 @@ double vtkSignedImplicitModeller::GetScalarTypeMax(int type)
     case VTK_DOUBLE:         return (double)VTK_DOUBLE_MAX;
     default: return 0;
     }
+}
+
+void vtkSignedImplicitModeller::SetBoxesSegmentation(std::list<std::vector<double> > const & _BoxesSegmentation)
+{
+	BoxesSegmentation = _BoxesSegmentation;
+	return;
+}
+
+void vtkSignedImplicitModeller::GetBoxesSegmentation(std::list<std::vector<double> > & _BoxesSegmentation)
+{
+	_BoxesSegmentation = BoxesSegmentation;
+	return;
 }
 
 //----------------------------------------------------------------------------
@@ -607,9 +379,34 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 		}
     }
 
+	vtkSmartPointer<vtkPolyData> poly = vtkPolyData::SafeDownCast(input);
+
+	// get BoxesSegmentation
+	std::list<std::vector<double> > BoxesSegmentation;
+	self->GetBoxesSegmentation(BoxesSegmentation);
+	bool const UseSegmentation = BoxesSegmentation.size()>0;
+
+	// remove segmentation boxes
+	if( UseSegmentation )
+	{
+		std::list<std::vector<double> >::iterator boxes_it = BoxesSegmentation.begin();
+		for(; boxes_it != BoxesSegmentation.end(); boxes_it++)
+		{
+			// create bounding box rectangle
+			vtkSmartPointer<vtkBox> box = vtkSmartPointer<vtkBox>::New();
+			box->SetBounds(boxes_it->data());
+
+			vtkSmartPointer<vtkClipPolyData> clipper = vtkSmartPointer<vtkClipPolyData>::New();
+			clipper->SetInputData(poly);
+			clipper->SetClipFunction(box);
+			clipper->Update();
+			poly = vtkPolyData::SafeDownCast(clipper->GetOutput());
+		}
+	}
+
 	// compute face and vertex normals if we don't have them already
 	vtkSmartPointer<vtkPolyDataNormals> normalsGen = vtkSmartPointer<vtkPolyDataNormals>::New();
-	normalsGen->SetInputData(input);
+	normalsGen->SetInputData(poly);
 	normalsGen->ComputeCellNormalsOn();
 	normalsGen->ComputePointNormalsOn();
 
@@ -621,9 +418,7 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 
 	// generate normals
 	normalsGen->Update();
-
-	// get updated version of input with all normals calculated
-	vtkSmartPointer<vtkPolyData> poly = vtkPolyData::SafeDownCast(normalsGen->GetOutput());
+	poly = vtkPolyData::SafeDownCast(normalsGen->GetOutput());
 
 	// obtain point/face mappings ***
 	// poly->BuildLinks();
@@ -631,7 +426,7 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 	//
 	// Traverse all cells; computing distance function on volume points.
 	//
-	
+
 	int const updateTime = std::max(1, (int)((double)poly->GetNumberOfCells() / (double)50.0));  // update every 2%
 
 	// for every cell (triangle in the mesh)
@@ -640,28 +435,18 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 		// compute volume of space in which this triangle could be a closest point
 		// (maxDistance is the maximum distance in which SDF calculated)
 		vtkCell * const cell = poly->GetCell(cellNum);
-
-		// check that all of the points have color (255, 255, 255)
-		bool IsSegment = false;
-
-		if( self->GetUseSegmentation())
-		{
-			double color[9];
-			for(int i=0; i<3; i++)
-				input->GetPointData()->GetScalars()->GetTuple(cell->GetPointIds()->GetId(i),&color[3*i]);
-			for(int i=0; i<9; i++)
-				IsSegment = IsSegment or (color[i] < 255.0);
-		}
-
-		if( !self->GetUseSegmentation() or !IsSegment )
-		{
 	
-			// get the 3 vertices
-			double p0[3], p1[3], p2[3];
-			cell->GetPoints()->GetPoint(0, p0);
-			cell->GetPoints()->GetPoint(1, p1);
-			cell->GetPoints()->GetPoint(2, p2);
-		
+		// get the 3 vertices
+		double p0[3], p1[3], p2[3];
+		cell->GetPoints()->GetPoint(0, p0);
+		cell->GetPoints()->GetPoint(1, p1);
+		cell->GetPoints()->GetPoint(2, p2);
+
+		// create Barycentric co-ordinates
+		vtkSignedImplicitModeller::Barycentric barycentric(p0, p1, p2);
+
+		if(barycentric.get_initialized())
+		{
 			double adjBounds[6];
 			double * const bounds = cell->GetBounds();
 			for (int i=0; i<3; i++)
@@ -703,22 +488,40 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 					{
 						x[0] = spacing[0] * i + origin[0];
 
+						// if(i==20 and j==14 and k==8) //***
+						// {
 						// get current distance and distance2 at this voxel
-						double distance, prevDistance2;
-						self->GetOutputDistance(*outSI, distance, prevDistance2, toDoubleScaleFactor);
+						double prevDistance, prevDistance2;
+						self->GetOutputDistance(*outSI, prevDistance, prevDistance2, toDoubleScaleFactor);
+
+						//std::printf("(%i %i %i) (%f %f %f) min_distance %f ",i,j,k,x[0],x[1],x[2],distance);
 
 						// compute distance to closest point on the cell from x
-						// if computation occurs without numerical error, 
-						// if distance less than current distance and if distance less than maximum distance
-						double closestPoint[3];
-						if ( self->ComputeSignedDistance(poly, cellNum, x, closestPoint, distance) != -1 and
-							 distance*distance < prevDistance2 and
-							 distance*distance <= maxDistance2 ) 
+						// if computation occurs without numerical error AND if distance less than maximum distance
+						double distance;
+						if(self->ComputeSignedDistance(poly, cellNum, barycentric, x, distance)>0 and
+							distance*distance <= maxDistance2)
 						{
+							// deal with thin structures
+							// if (abs(distance)-abs(prevDistance)) < threshold and sign(Distance)!=sign(prevDistance)
+							// need to correct for positive sign (outside)
+							bool thin_structure = false;
+							if( (((distance*distance)-prevDistance2)*((distance*distance)-prevDistance2)) < 1e-12 and
+								( (distance>0 and prevDistance<0) or (distance<0 and prevDistance>0) ) )
+							{
+								thin_structure = true;
+
+								// choose sign +ve
+								if(distance<0)
+									distance *= -1.0;
+							}
+
 							// set distance at this voxel in SDF image
-							self->SetOutputDistance(distance, outSI, capValue, scaleFactor);
-						
+							if(distance*distance < prevDistance2 or thin_structure)
+								self->SetOutputDistance(distance, outSI, capValue, scaleFactor);
 						}
+						
+						// }
 						outSI++;
 					}
 					outIt.NextSpan();
@@ -727,9 +530,7 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 		}
 
 		if (cellNum % updateTime == 0)
-		{
 			self->UpdateProgress(double(cellNum + 1) / poly->GetNumberOfCells());
-		}
 	}
 }
 
@@ -745,27 +546,27 @@ void vtkSignedImplicitModeller::Append(vtkDataSet *input)
 	vtkImageData *output = this->GetOutput();
 
 	if ( !this->BoundsComputed )
-    {
+	{
 		this->ComputeModelBounds(input);
-    }
+	}
 
 	// if (this->ProcessMode == VTK_CELL_MODE)
-    // {
-		if (!output->GetPointData()->GetScalars())
-		{
-			vtkErrorMacro("Sanity check failed.");
-			return;
-		}
+	// {
+	if (!output->GetPointData()->GetScalars())
+	{
+		vtkErrorMacro("Sanity check failed.");
+		return;
+	}
  
-		switch (this->OutputScalarType)
-		{
-			vtkTemplateMacro(
-				vtkSignedImplicitModellerAppendExecute( this, 
-														input, 
-														output, 
-														this->InternalMaxDistance, 
-														static_cast<VTK_TT *>(0)));
-		}
+	switch (this->OutputScalarType)
+	{
+		vtkTemplateMacro(
+			vtkSignedImplicitModellerAppendExecute( this, 
+													input, 
+													output, 
+													this->InternalMaxDistance, 
+													static_cast<VTK_TT *>(0)));
+	}
     // }
 	// else
     // {
