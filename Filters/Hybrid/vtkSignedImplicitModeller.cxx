@@ -198,15 +198,14 @@ int vtkSignedImplicitModeller::ComputeSignedDistance(vtkPolyData * input, int ce
 
 	double dot_product = vtkMath::Dot(diffvec,normal);
 	
-	if(dot_product < 0)
+	// negative distance if dot_product<0
+	// but only if can be confident i.e. abs(dot_product) not too small
+	if( (dot_product<0.0) and (1e-12 < (dot_product)*(dot_product)) )
 		sdist *= -1.0;
-
+	
 	//std::printf("proposed_distance %f dot_product %f bcoords %f %f %f vec %f %f %f normal %f %f %f cp %f %f %f \n",sdist,vtkMath::Dot(diffvec,normal),cp_barycentric[0],cp_barycentric[1],cp_barycentric[2],diffvec[0],diffvec[1],diffvec[2],normal[0],normal[1],normal[2],cp[0],cp[1],cp[2]);
 	
-	if( (dot_product)*(dot_product) < 1e-12)
-		return 0;
-	else
-		return 1;
+	return 1;
 }
 
 void vtkSignedImplicitModeller::SetOutputScalarType(int type)
@@ -408,7 +407,7 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 	vtkSmartPointer<vtkPolyDataNormals> normalsGen = vtkSmartPointer<vtkPolyDataNormals>::New();
 	normalsGen->SetInputData(poly);
 	normalsGen->ComputeCellNormalsOn();
-	normalsGen->ComputePointNormalsOn();
+	normalsGen->ComputePointNormalsOff();
 
 	// I seem to get the best results with all these fancy options turned off
 	normalsGen->SplittingOff();
@@ -503,8 +502,7 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 							distance*distance <= maxDistance2)
 						{
 							// deal with thin structures
-							// if (abs(distance)-abs(prevDistance)) < threshold and sign(Distance)!=sign(prevDistance)
-							// need to correct for positive sign (outside)
+							// if distance same but signs different, assume positive sign (outside)
 							bool thin_structure = false;
 							if( (((distance*distance)-prevDistance2)*((distance*distance)-prevDistance2)) < 1e-12 and
 								( (distance>0 and prevDistance<0) or (distance<0 and prevDistance>0) ) )

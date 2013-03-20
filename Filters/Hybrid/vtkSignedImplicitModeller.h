@@ -105,7 +105,7 @@ public:
 			det = -1.0*p0_plane[1]*p1_plane[0];
 
 			// check that matrix is invertible
-			if( (det*det) < 1e-9 )
+			if( (det*det) < 1e-12 )
 				initialized = false;
 			else
 				initialized = true;
