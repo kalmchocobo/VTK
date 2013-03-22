@@ -102,11 +102,38 @@ vtkSignedImplicitModeller::~vtkSignedImplicitModeller()
     }
 }
 
+bool vtkSignedImplicitModeller::intersect(double const * const p1, double const * const p2, double const * const extent)
+{
+	// from http://www.gamedev.net/topic/338987-aabb---line-segment-intersection-test/
+	double d[3], e[3], c[3], a[3];
+	for(int i=0; i<3; i++)
+	{
+		d[i] = 0.5*(p2[i]         - p1[i]);
+		e[i] = 0.5*(extent[2*i+1] - extent[2*i]);
+		c[i] = p1[i] + d[i] - 0.5*(extent[2*i+1] + extent[2*i]);
+
+		// a[i] = fabs(d[i])
+		a[i] = d[i];
+		if(a[i]<0)
+			a[i] *= -1.0;
+
+		if(c[i]*c[i] > (e[i]+a[i])*(e[i]+a[i]))
+			return false;
+	}
+
+	for(int i=0; i<3; i++)
+	{
+		int const j = (i+1)%3;
+
+		if( (d[i]*c[j] - d[j]*c[i])*(d[i]*c[j] - d[j]*c[i]) > (e[i]*a[j] + e[j]*a[i] + 1e-12)*(e[i]*a[j] + e[j]*a[i] + 1e-12))
+			return false;
+	}
+
+	return true;
+}
+
 int vtkSignedImplicitModeller::ComputeSignedDistance(vtkPolyData * input, int cellNum, Barycentric const & barycentric, double x[3], double & sdist)
 {
-	// initialize outputs
-	sdist = std::numeric_limits<double>::max();
-
 	// first find the closest point
 	double cp[3], cp_barycentric[3];
 
@@ -147,7 +174,6 @@ int vtkSignedImplicitModeller::ComputeSignedDistance(vtkPolyData * input, int ce
 	else
 	{
 		/* otherwise, closest point lies on boundary of triangle */
-
 		double dist[3], t[3], cp_l[9];
 
 		dist[0] = vtkLine::DistanceToLine(x,p2,p1,t[0],&(cp_l[0]));
@@ -161,7 +187,30 @@ int vtkSignedImplicitModeller::ComputeSignedDistance(vtkPolyData * input, int ce
 		if(dist[2] < dist[1] and dist[2] < dist[0])
 			closest = 2;
 
-		for (int i=0; i<3; i++)
+		// check that the boundary is not on the mesh boundary
+		vtkIdType pA, pB;
+		if(closest==0)
+		{
+			pA = cell->GetPointIds()->GetId(2);
+			pB = cell->GetPointIds()->GetId(1);
+		} 
+		else if(closest==1)
+		{
+			pA = cell->GetPointIds()->GetId(2);
+			pB = cell->GetPointIds()->GetId(0);
+		}
+		else
+		{
+			pA = cell->GetPointIds()->GetId(1);
+			pB = cell->GetPointIds()->GetId(0);
+		}
+		vtkSmartPointer<vtkIdList> neighbours = vtkSmartPointer<vtkIdList>::New();
+		neighbours->Allocate(VTK_CELL_SIZE);
+		input->GetCellEdgeNeighbors(cellNum,pA,pB,neighbours);
+		if((int)neighbours->GetNumberOfIds() != 1)
+			return 0;
+
+			for (int i=0; i<3; i++)
 			cp[i] = cp_l[3*closest + i];
 
 		barycentric.compute(cp, cp_barycentric);
@@ -169,20 +218,39 @@ int vtkSignedImplicitModeller::ComputeSignedDistance(vtkPolyData * input, int ce
 
 	// we now have cp and cp_barycentric
 
-	// compute distance from x to cp
-	sdist = std::sqrt(vtkMath::Distance2BetweenPoints(x,cp));
+	// vector between point and closest point on the triangle
+	double diffvec[3];
+	vtkMath::Subtract(x,cp,diffvec);
 
-	// compute corresponding normal
-	double normal[3];
+	// if we have hole regions
+	// and if diffvec passes through a hole region
+	// then we cannot really know the SDF at this point
+	std::list<std::vector<double> >::iterator boxes_it = BoxesSegmentation.begin();
+	for(; boxes_it != BoxesSegmentation.end(); boxes_it++)
+	{
+		// if there is an intersection, sdf not valid
+		if(intersect(x, cp, boxes_it->data()))
+			return 0;
+
+		//std::printf("%i ",(int)intersect(x, cp, boxes_it->data()));
+	}
+
+	// compute distance from x to cp
+	sdist = 0.0;
+	for(int i=0; i<3; i++)
+		sdist += diffvec[i]*diffvec[i];
+	sdist = std::sqrt(sdist);
 
 	// get the 3 vertex normals
 	// double vNormal[9];
 	// for(int i=0; i<3; i++)
 	// 	input->GetPointData()->GetNormals()->GetTuple(cell->GetPointIds()->GetId(i),&(vNormal[3*i]));
 
-	// for each dimension
+	// compute corresponding normal
+	double normal[3];
 	for(int i=0; i<3; i++)
 	{
+		// just use face normals as vertex normals can be unstable
 		normal[i] = planeNormal[i];
 
 		// normal[i] = 0.0;
@@ -193,17 +261,14 @@ int vtkSignedImplicitModeller::ComputeSignedDistance(vtkPolyData * input, int ce
 	}
 
 	// compute sign
-	double diffvec[3];
-	vtkMath::Subtract(x,cp,diffvec);
-
 	double dot_product = vtkMath::Dot(diffvec,normal);
 	
-	// negative distance if dot_product<0
-	// but only if can be confident i.e. abs(dot_product) not too small
+	// take sign of dot_product
+	// make negative only if can be confident i.e. abs(dot_product) not too small
 	if( (dot_product<0.0) and (1e-12 < (dot_product)*(dot_product)) )
 		sdist *= -1.0;
 	
-	//std::printf("proposed_distance %f dot_product %f bcoords %f %f %f vec %f %f %f normal %f %f %f cp %f %f %f \n",sdist,vtkMath::Dot(diffvec,normal),cp_barycentric[0],cp_barycentric[1],cp_barycentric[2],diffvec[0],diffvec[1],diffvec[2],normal[0],normal[1],normal[2],cp[0],cp[1],cp[2]);
+	// std::printf("proposed_distance %f dot_product %f bcoords %f %f %f vec %f %f %f normal %f %f %f cp %f %f %f \n",sdist,vtkMath::Dot(diffvec,normal),cp_barycentric[0],cp_barycentric[1],cp_barycentric[2],diffvec[0],diffvec[1],diffvec[2],normal[0],normal[1],normal[2],cp[0],cp[1],cp[2]);
 	
 	return 1;
 }
@@ -403,7 +468,7 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 		}
 	}
 
-	// compute face and vertex normals if we don't have them already
+	// compute face and vertex normals
 	vtkSmartPointer<vtkPolyDataNormals> normalsGen = vtkSmartPointer<vtkPolyDataNormals>::New();
 	normalsGen->SetInputData(poly);
 	normalsGen->ComputeCellNormalsOn();
@@ -419,8 +484,10 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 	normalsGen->Update();
 	poly = vtkPolyData::SafeDownCast(normalsGen->GetOutput());
 
-	// obtain point/face mappings ***
-	// poly->BuildLinks();
+	// how to use this? how to get scalar? how to get id for edge?
+
+	// obtain point/face mappings
+	poly->BuildLinks();
 
 	//
 	// Traverse all cells; computing distance function on volume points.
@@ -516,7 +583,10 @@ void vtkSignedImplicitModellerAppendExecute(vtkSignedImplicitModeller *self,
 
 							// set distance at this voxel in SDF image
 							if(distance*distance < prevDistance2 or thin_structure)
+							{
 								self->SetOutputDistance(distance, outSI, capValue, scaleFactor);
+								// std::printf("(%i %i %i) (%f %f %f) prevDistance %f distance %f\n",i,j,k,x[0],x[1],x[2],prevDistance,distance);
+							}
 						}
 						
 						// }

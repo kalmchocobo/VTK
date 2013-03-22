@@ -307,8 +307,12 @@ public:
 	template<class OT>
 	void GetOutputDistance(OT outputValue, double & distance, double & distance2, double scaleFactor=0);
 
+	// compute intersection of a line segment with an axis aligned bounding box
+	static bool intersect(double const * const p1, double const * const p2, double const * const extent);
+
 	// computation of signed distance function
 	int ComputeSignedDistance(vtkPolyData * input, int cellNum, Barycentric const & barycentric, double x[3], double & sdist);
+
 
 protected:
 	vtkSignedImplicitModeller();
